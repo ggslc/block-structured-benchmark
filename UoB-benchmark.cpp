@@ -400,7 +400,7 @@ void setGrids(Vector<DisjointBoxLayout>& a_grids,
 void logTime(string a_item)
 {
   MPI_Barrier(Chombo_MPI::comm);
-  pout() << " time: " << std::clock() << " " << a_item << endl;
+  pout() << " time: " << float(std::clock())/CLOCKS_PER_SEC << " " << a_item << endl;
 }
 
 int main(int argc, char* argv[])
