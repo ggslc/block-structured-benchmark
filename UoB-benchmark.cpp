@@ -27,7 +27,7 @@
 struct VCPoissonParameters
 {
 
-  int numLevels, nCoarsestCells;
+  int nLevels, nCoarsestCells;
   Real coarsestDx;
   ProblemDomain coarsestDomain;
   Vector<int> refRatio;
@@ -42,10 +42,10 @@ struct VCPoissonParameters
   {
     ParmParse pp;
     
-    numLevels = 4;
-    pp.query("num_levels",numLevels);
+    nLevels = 2;
+    pp.query("n_levels",nLevels);
 
-    int n_cells = 64;
+    int n_cells = 128;
     pp.query("coarsest_n_cells", n_cells);
     nCoarsestCells = n_cells;
     n_cells /= 2;
@@ -62,7 +62,7 @@ struct VCPoissonParameters
     alpha = 1.0;
     beta = 1.0;
 
-    for (int lev = 0; lev <= numLevels; lev++)
+    for (int lev = 0; lev <= nLevels; lev++)
       {
 	refRatio.push_back(2);
       }
@@ -81,6 +81,14 @@ struct VCPoissonParameters
   }
 
 };
+
+ostream& operator<<(ostream& os, VCPoissonParameters p)
+{
+  return os << "n_levels = " << p.nLevels << endl 
+	    << "coarsest_n_cells = " << p.nCoarsestCells << endl;
+    
+}
+
 extern
 AMRLevelOpFactory<LevelData<FArrayBox> >*
 defineOperatorFactory(
@@ -125,7 +133,7 @@ void poissonSolve(Vector<LevelData<FArrayBox>* >& a_phi,
   CH_TIME("poissonSolve");
   ParmParse pp;
 
-  int nlevels = a_params.numLevels;
+  int nlevels = a_params.nLevels;
   a_phi.resize(nlevels);
   a_rhs.resize(nlevels);
   Vector<RefCountedPtr<LevelData<FArrayBox> > > aCoef(nlevels);
@@ -181,21 +189,20 @@ void poissonSolve(Vector<LevelData<FArrayBox>* >& a_phi,
 
   int lBase = 0;
   MultilevelLinearOp<FArrayBox> mlOp;
-  int numMGIter = 1;
-  pp.query("numMGIterations", numMGIter);
-
-  mlOp.m_num_mg_iterations = numMGIter;
-  int numMGSmooth = 4;
-  pp.query("numMGsmooth", numMGSmooth);
-  mlOp.m_num_mg_smooth = numMGSmooth;
+  int nMGIter = 1;
+  pp.query("nMGIterations", nMGIter);
+  mlOp.m_num_mg_iterations = nMGIter;
+  int nMGSmooth = 4;
+  pp.query("nMGsmooth", nMGSmooth);
+  mlOp.m_num_mg_smooth = nMGSmooth;
   int preCondSolverDepth = -1;
   pp.query("preCondSolverDepth", preCondSolverDepth);
   mlOp.m_preCondSolverDepth = preCondSolverDepth;
 
-  Real tolerance = 1.0e-7;
+  Real tolerance = 0.0;
   pp.query("tolerance", tolerance);
 
-  int max_iter = 10;
+  int max_iter = 2;
   pp.query("max_iterations", max_iter);
 
   mlOp.define(a_grids, a_params.refRatio, vectDomains,
@@ -222,7 +229,7 @@ string ioName(const VCPoissonParameters& a_params,
   os << "uob-benchmark" 
      << "-coarse-" << a_params.nCoarsestCells
      << "-cpu-" << a_cpu
-     << "-nlev-" << a_params.numLevels
+     << "-nlev-" << a_params.nLevels
      << "-lev-" << a_lev
      << "-box-" << a_box
 
@@ -230,65 +237,58 @@ string ioName(const VCPoissonParameters& a_params,
   return os.str();
 
 }
-void inputDataManyFile(const Vector<LevelData<FArrayBox>* >&   a_phi,
+void ioDataManyFile(const Vector<LevelData<FArrayBox>* >&   a_phi,
 			const Vector< DisjointBoxLayout >&  a_grids,
-			const VCPoissonParameters&  a_params)
+		    const VCPoissonParameters&  a_params, bool a_out)
 {
-  MPI_Barrier(Chombo_MPI::comm);
-  CH_TIME("intputDataManyFile");
- 
+  CH_TIME("ioDataManyFile");
+  
   Interval interval(0,0);
+
+  int n_buf = sizeof(Real);
+  for (int dir = 0; dir < SpaceDim; dir++)  
+    {
+      n_buf *= (4+a_params.maxBoxSize);
+    }
+  char* buf = new char[n_buf];
 
   for (int lev = 0; lev < a_grids.size(); lev++)
     {
       int boxid = 0;
       for (DataIterator dit(a_grids[lev]); dit.ok(); ++dit, ++boxid)
 	{
-	  ifstream os(ioName( a_params, "bin",  procID(), lev, boxid).c_str(),ios::binary);
 	  FArrayBox& fab = (*a_phi[lev])[dit];
 	  int n = fab.size(fab.box(),interval);
-	  char* buf = new char[n];
+	  if (n > n_buf)
+	    {
+	      //shouldn't really happen, but...
+	      n_buf = n;
+	      delete buf;
+	      buf = new char[n_buf];
+	    }
 	  if (buf)
 	    {
-	      os.read(buf, n);
-	      fab.linearIn(buf, fab.box(),interval);
-	      delete[] buf;
+	      if (a_out)
+		{
+		  ofstream os(ioName( a_params, "bin", procID(),  lev, boxid).c_str(),ios::binary);
+		  fab.linearOut(buf, fab.box(),interval);
+		  os.write(buf, n);
+		  os.close();
+		}
+	      else
+		{
+		  ifstream is(ioName( a_params, "bin",  procID(), lev, boxid).c_str(),ios::binary);
+		  is.read(buf, n);
+		  fab.linearIn(buf, fab.box(),interval);
+		  is.close();
+		}
 	    }
-	  os.close();
+	  
 	}
     }
-  MPI_Barrier(Chombo_MPI::comm);
+  if (buf) delete[] buf;
 }
 
-void outputDataManyFile(const Vector<LevelData<FArrayBox>* >&   a_phi,
-			const Vector< DisjointBoxLayout >&  a_grids,
-			const VCPoissonParameters&  a_params)
-{
-  MPI_Barrier(Chombo_MPI::comm);
-  CH_TIME("outputDataManyFile");
-
-  Interval interval(0,0);
-
-  for (int lev = 0; lev < a_grids.size(); lev++)
-    {
-      int boxid = 0;
-      for (DataIterator dit(a_grids[lev]); dit.ok(); ++dit, ++boxid)
-	{
-	  ofstream os(ioName( a_params, "bin", procID(),  lev, boxid).c_str(),ios::binary);
-	  FArrayBox& fab = (*a_phi[lev])[dit];
-	  int n = fab.size(fab.box(),interval);
-	  char* buf = new char[n];
-	  if (buf)
-	    {
-	      fab.linearOut(buf, fab.box(),interval);
-	      os.write(buf, n);
-	      delete[] buf;
-	    }
-	  os.close();
-	}
-    }
-  MPI_Barrier(Chombo_MPI::comm);
-}
 
 
 void outputDataHDF5(const Vector<LevelData<FArrayBox>* >&   a_phi,
@@ -307,7 +307,7 @@ void outputDataHDF5(const Vector<LevelData<FArrayBox>* >&   a_phi,
 			a_params.coarsestDx,
 			fakeDt, fakeTime,
 			a_params.refRatio,
-			a_params.numLevels);
+			a_params.nLevels);
 
 #endif
 }
@@ -390,7 +390,7 @@ void setGrids(Vector<DisjointBoxLayout>& a_grids,
   LoadBalance(procAssign,baseBoxes);
   a_grids.push_back(DisjointBoxLayout(baseBoxes, procAssign, a_param.coarsestDomain));
   
-  for (int finest_level = 1; finest_level < a_param.numLevels; finest_level++)
+  for (int finest_level = 1; finest_level < a_param.nLevels; finest_level++)
     {
       refineGrids(a_grids, a_param,finest_level );
     }
@@ -399,8 +399,10 @@ void setGrids(Vector<DisjointBoxLayout>& a_grids,
 
 void logTime(string a_item)
 {
+#ifdef CH_MPI
   MPI_Barrier(Chombo_MPI::comm);
-  pout() << " time: " << float(std::clock())/CLOCKS_PER_SEC << " " << a_item << endl;
+#endif
+  pout() << "time: " << float(std::clock())/CLOCKS_PER_SEC << " " << a_item << endl;
 }
 
 int main(int argc, char* argv[])
@@ -411,15 +413,30 @@ int main(int argc, char* argv[])
 #endif
   // Scoping trick
   {
+#ifdef CH_MPI
+    MPI_Barrier(Chombo_MPI::comm);
+#endif
+    int rank, nrank;
+#ifdef CH_MPI
+    MPI_Comm_rank(Chombo_MPI::comm, &rank);
+    MPI_Comm_size(Chombo_MPI::comm, &nrank);
+#else
+    rank=0;
+    nrank=1;
+#endif
+
     // command line params only - no input file for now
     ParmParse pp(argc-1,argv+1,NULL,NULL);
 
     VCPoissonParameters param;
-    Vector<DisjointBoxLayout> grids;
 
-    int nlevels = param.numLevels;
-    Vector<LevelData<FArrayBox>* > phi(nlevels, NULL);
-    Vector<LevelData<FArrayBox>* > rhs(nlevels, NULL);
+    pout() << param;
+
+    pout() << "n_rank = " <<  nrank << endl;
+
+    Vector<DisjointBoxLayout> grids;
+    Vector<LevelData<FArrayBox>* > phi(param.nLevels, NULL);
+    Vector<LevelData<FArrayBox>* > rhs(param.nLevels, NULL);
 
     setGrids(grids,  param);
     logTime("end initialize");
@@ -427,10 +444,11 @@ int main(int argc, char* argv[])
     poissonSolve(phi, rhs, grids,  param);
     logTime("end poissonSolve");
 
-    outputDataManyFile(phi, grids, param);
+    bool out(true);
+    ioDataManyFile(phi, grids, param, out);
     logTime("end outputDataManyFile");
 
-    inputDataManyFile(phi, grids, param);
+    ioDataManyFile(phi, grids, param, !out);
     logTime("end inputDataManyFile");
 
     outputDataHDF5(phi, grids, param);
@@ -453,6 +471,8 @@ int main(int argc, char* argv[])
       }
 
   }// End scoping trick
+
+CH_TIMER_REPORT();
 
 #ifdef CH_MPI
   MPI_Finalize();
