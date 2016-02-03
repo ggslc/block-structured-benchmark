@@ -224,18 +224,21 @@ void poissonSolve(Vector<LevelData<FArrayBox>* >& a_phi,
 }
 
 string ioName(const VCPoissonParameters& a_params, 
-	      std::string a_suffix, int a_cpu, int a_lev, int a_box)
+	      std::string a_suffix, int a_rank, int a_lev, int a_box)
 {
 
   ostringstream os;
   os << "uob-benchmark" 
      << "-coarse-" << a_params.nCoarsestCells
-     << "-cpu-" << a_cpu
      << "-nlev-" << a_params.nLevels
-     << "-lev-" << a_lev
-     << "-box-" << a_box
-
-     << "." <<  CH_SPACEDIM << "." <<  a_suffix;
+     << "-nrank-" << numProc();
+  if (a_rank >= 0)
+    os << "-rank-" << a_rank;
+  if (a_lev >= 0)
+    os << "-lev-" << a_lev;
+  if (a_box >= 0)
+    os << "-box-" << a_box;
+  os << "." <<  CH_SPACEDIM << "d." <<  a_suffix;
   return os.str();
 
 }
@@ -265,7 +268,7 @@ void ioDataManyFile(const Vector<LevelData<FArrayBox>* >&   a_phi,
 	    {
 	      //shouldn't really happen, but...
 	      n_buf = n;
-	      delete buf;
+	      if (buf) delete[] buf;
 	      buf = new char[n_buf];
 	    }
 	  if (buf)
@@ -299,7 +302,7 @@ void outputDataHDF5(const Vector<LevelData<FArrayBox>* >&   a_phi,
 {
 #ifdef CH_USE_HDF5
   CH_TIME("outputDataHDF5");
-  string fileName = ioName( a_params, "hdf5",0,0,0);
+  string fileName = ioName( a_params, "hdf5",-1,-1,-1);
   Vector<string> phiNames(1,"phi");  
   Real fakeTime = 1.0;
   Real fakeDt = 1.0;
@@ -404,12 +407,13 @@ void logTime(string a_item)
 #ifdef CH_MPI
   MPI_Barrier(Chombo_MPI::comm);
 #endif
-  pout() << "time: " << std::time(0) - initial_time <<  " clock: " << float(std::clock())/CLOCKS_PER_SEC << " " << a_item << endl;
+  pout() << "time: " << std::difftime(std::time(0) , initial_time) <<  " clock: " << float(std::clock())/CLOCKS_PER_SEC << " " << a_item << endl;
 }
 
 int main(int argc, char* argv[])
 {
   int status = 0;
+  setenv("CH_TIMER","1",1);
 #ifdef CH_MPI
   MPI_Init(&argc, &argv);
 #endif
@@ -426,13 +430,12 @@ int main(int argc, char* argv[])
     rank=0;
     nrank=1;
 #endif
-    //setenv("CH_TIMER","0");
     initial_time = std::time(0);
     // command line params only - no input file for now
     ParmParse pp(argc-1,argv+1,NULL,NULL);
     
     VCPoissonParameters param;
-    setPoutBaseName(ioName(param, "pout", procID(),  0, 0));
+    setPoutBaseName(ioName(param, "pout", procID(),  -1, -1));
     pout() << param;
 
     pout() << "n_rank = " <<  nrank << endl;
@@ -473,19 +476,13 @@ int main(int argc, char* argv[])
           }
       }
 
-    // if (procID() == uniqueProc(SerialTask::compute))
-    // {
-    //ofstream os(ioName(param, "timer", procID(),  0, 0).c_str());
     CH_TIMER_REPORTNAME(pout(), "poissonSolve"); pout() << endl;
     CH_TIMER_REPORTNAME(pout(), "ioDataManyFile"); pout() << endl;
     CH_TIMER_REPORTNAME(pout(), "outputDataHDF5"); pout() << endl;
-	//os.close();
-	// }
-
   }// End scoping trick
 
 CH_TIMER_REPORT();
-CH_TIMER_REPORT();
+
 #ifdef CH_MPI
   MPI_Finalize();
 #endif
