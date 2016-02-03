@@ -78,6 +78,8 @@ struct VCPoissonParameters
 
     nestingRadius = 1;
     pp.query("nesting_radius", nestingRadius);
+
+    verbosity = 4;
   }
 
 };
@@ -396,13 +398,13 @@ void setGrids(Vector<DisjointBoxLayout>& a_grids,
     }
 
 }
-
+time_t initial_time;
 void logTime(string a_item)
 {
 #ifdef CH_MPI
   MPI_Barrier(Chombo_MPI::comm);
 #endif
-  pout() << "time: " << float(std::clock())/CLOCKS_PER_SEC << " " << a_item << endl;
+  pout() << "time: " << std::time(0) - initial_time <<  " clock: " << float(std::clock())/CLOCKS_PER_SEC << " " << a_item << endl;
 }
 
 int main(int argc, char* argv[])
@@ -424,12 +426,13 @@ int main(int argc, char* argv[])
     rank=0;
     nrank=1;
 #endif
-
+    //setenv("CH_TIMER","0");
+    initial_time = std::time(0);
     // command line params only - no input file for now
     ParmParse pp(argc-1,argv+1,NULL,NULL);
-
+    
     VCPoissonParameters param;
-
+    setPoutBaseName(ioName(param, "pout", procID(),  0, 0));
     pout() << param;
 
     pout() << "n_rank = " <<  nrank << endl;
@@ -470,10 +473,19 @@ int main(int argc, char* argv[])
           }
       }
 
+    // if (procID() == uniqueProc(SerialTask::compute))
+    // {
+    //ofstream os(ioName(param, "timer", procID(),  0, 0).c_str());
+    CH_TIMER_REPORTNAME(pout(), "poissonSolve"); pout() << endl;
+    CH_TIMER_REPORTNAME(pout(), "ioDataManyFile"); pout() << endl;
+    CH_TIMER_REPORTNAME(pout(), "outputDataHDF5"); pout() << endl;
+	//os.close();
+	// }
+
   }// End scoping trick
 
 CH_TIMER_REPORT();
-
+CH_TIMER_REPORT();
 #ifdef CH_MPI
   MPI_Finalize();
 #endif

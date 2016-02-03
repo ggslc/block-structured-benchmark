@@ -1,5 +1,9 @@
 # -*- Mode: Makefile -*- 
-
+OPT=TRUE
+MPI=TRUE
+DIM=3
+USE_64=TRUE
+USE_HDF=TRUE
 # trace the chain of included makefiles
 makefiles += UoB-benchmark
 
